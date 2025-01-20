@@ -1,6 +1,5 @@
 import pygame as pg
-import torch
-import torch.nn as nn
+import tensorflow as tf
 import neat
 import os
 import pickle
@@ -10,29 +9,24 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import List, Tuple
 
 
-class NEATPongNet(nn.Module):
+class NEATPongNet(tf.keras.Model):
     def __init__(self, genome, config):
         super().__init__()
         self.genome = genome
         self.config = config
 
-        # Convert NEAT genome to PyTorch layers
-        self.layers = self._build_layers()
-        self.to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+        # Convert NEAT genome to TensorFlow layers
+        self.model_layers = self._build_layers()
 
     def _build_layers(self):
-        layers = nn.ModuleList()
+        return [
+            tf.keras.layers.Dense(10, activation="relu", input_shape=(3,)),
+            tf.keras.layers.Dense(3, activation="softmax"),
+        ]
 
-        # Simplified network architecture - you can make this more complex
-        layers.append(nn.Linear(3, 10))  # 3 inputs: ball_x, ball_y, paddle_y
-        layers.append(nn.ReLU())
-        layers.append(nn.Linear(10, 3))  # 3 outputs: stay, up, down
-        layers.append(nn.Softmax(dim=1))
-
-        return layers
-
-    def forward(self, x):
-        for layer in self.layers:
+    def call(self, inputs):
+        x = inputs
+        for layer in self.model_layers:
             x = layer(x)
         return x
 
@@ -43,25 +37,28 @@ class GPUPongGame:
         self.ball = self.game.ball
         self.left_paddle = self.game.left_paddle
         self.right_paddle = self.game.right_paddle
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    def get_game_state(self) -> torch.Tensor:
-        # Convert game state to tensor and move to GPU
-        state = torch.tensor(
-            [self.ball.x, self.ball.y, self.right_paddle.y], dtype=torch.float32
-        ).to(self.device)
+        # Check if GPU is available
+        self.gpus = tf.config.list_physical_devices("GPU")
+        if self.gpus:
+            # Enable memory growth to prevent TF from allocating all GPU memory
+            for gpu in self.gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
 
-        return state.unsqueeze(0)  # Add batch dimension
+    def get_game_state(self) -> tf.Tensor:
+        # Convert game state to TensorFlow tensor
+        state = tf.convert_to_tensor(
+            [[self.ball.x, self.ball.y, self.right_paddle.y]], dtype=tf.float32
+        )
+        return state
 
     def train_ai_batch(self, genomes: List[Tuple], config, batch_size=32):
         """Train multiple AI instances in parallel using GPU batching"""
-        networks = [
-            NEATPongNet(genome, config).to(self.device) for genome, _ in genomes
-        ]
+        networks = [NEATPongNet(genome, config) for genome, _ in genomes]
 
         # Create game instances for each network pair
         games = [
-            GPUPongGame(self.game.window, self.game.game_width, self.game.game_height)
+            GPUPongGame(self.game.window, self.game.window_width, self.game.window_height)
             for _ in range(len(networks) // 2)
         ]
 
@@ -86,17 +83,21 @@ class GPUPongGame:
             for genome_idx, fitness in game_result:
                 genomes[genome_idx][1].fitness = fitness
 
+    @tf.function
+    def _predict_batch(self, network, states):
+        """GPU-accelerated batch prediction"""
+        return network(states)
+
     def _process_game_batch(self, games, networks):
         results = []
         max_steps = 2000  # Prevent infinite games
 
         for step in range(max_steps):
             # Get states for all games
-            states = torch.cat([game.get_game_state() for game in games])
+            states = tf.concat([game.get_game_state() for game in games], axis=0)
 
             # Process all networks in parallel on GPU
-            with torch.no_grad():
-                outputs = [net(states) for net in networks]
+            outputs = [self._predict_batch(net, states) for net in networks]
 
             # Update game states based on network outputs
             for game_idx, game in enumerate(games):
@@ -104,12 +105,14 @@ class GPUPongGame:
                 right_output = outputs[game_idx * 2 + 1]
 
                 # Convert outputs to actions
-                left_action = torch.argmax(left_output).item()
-                right_action = torch.argmax(right_output).item()
+                left_action = tf.argmax(left_output[game_idx : game_idx + 1], axis=1)[0]
+                right_action = tf.argmax(right_output[game_idx : game_idx + 1], axis=1)[
+                    0
+                ]
 
                 # Apply actions
-                self._apply_action(game, left_action, is_left=True)
-                self._apply_action(game, right_action, is_left=False)
+                self._apply_action(game, left_action.numpy(), is_left=True)
+                self._apply_action(game, right_action.numpy(), is_left=False)
 
                 # Update game state
                 game_info = game.game.loop()
@@ -160,7 +163,7 @@ def run_neat_gpu(config_path):
 
     # Initialize PyGame
     width, height = 1080, 720
-    window = pg.display.set_mode((width, height))
+    window = pg.display.set_mode((width, height), flags=pg.SWSURFACE)
     game = GPUPongGame(window, width, height)
 
     # Custom evaluation function using GPU
@@ -176,6 +179,21 @@ def run_neat_gpu(config_path):
 
 
 if __name__ == "__main__":
+    # Fix for OpenGL context / X11 display issues
+    os.environ["SDL_VIDEODRIVER"] = "x11"
+    os.environ["DISPLAY"] = ":0"
+
+    # Enable mixed precision training for better GPU performance
+    tf.keras.mixed_precision.set_global_policy("mixed_float16")
+
+    # Initialize pygame before creating the window
+    pg.init()
+
+    # Set pygame OpenGL attributes
+    pg.display.gl_set_attribute(pg.GL_CONTEXT_MAJOR_VERSION, 3)
+    pg.display.gl_set_attribute(pg.GL_CONTEXT_MINOR_VERSION, 3)
+    pg.display.gl_set_attribute(pg.GL_CONTEXT_PROFILE_MASK, pg.GL_CONTEXT_PROFILE_CORE)
+
     local_dir = os.path.dirname(__file__)
     config_path = os.path.join(local_dir, "config.txt")
     run_neat_gpu(config_path)

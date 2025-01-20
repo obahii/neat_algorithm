@@ -51,3 +51,5 @@ coverage/
 
 # Jupyter Notebook metadata
 *.ipynb-meta
+.gpu_env/
+.gpu_env

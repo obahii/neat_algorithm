@@ -34,7 +34,7 @@ class PonGame:
 
             # print(game_info.left_score, game_info.right_score)
             output = nn.activate((self.ball.x, self.ball.y, self.right_paddle.y))
-            desicion = desicion.index(max(output))
+            desicion = output.index(max(output))
             if desicion == 0:
                 pass
             elif desicion == 1:
@@ -74,8 +74,8 @@ class PonGame:
             else:
                 self.game.move_paddle(left=False, up=False)
             game_info = self.game.loop()
-            self.game.draw(draw_score=False, draw_hits=True)
-            pg.display.update()
+            # self.game.draw(draw_score=False, draw_hits=True)
+            # pg.display.update()
 
             if game_info.left_score >= 1 or game_info.right_score >= 1 or game_info.left_hits > 50 or game_info.right_hits > 50:
                 self.calculate_fitness(genome_1, genome_2, game_info)
@@ -137,8 +137,8 @@ def eval_genomes(genomes, config):
 
 
 def run_neat(config):
-    # population = neat.Checkpointer.restore_checkpoint("neat-checkpoint-0")
-    population = neat.Population(config)
+    population = neat.Checkpointer.restore_checkpoint("neat-checkpoint-23")
+    # population = neat.Population(config)
     population.add_reporter(neat.StdOutReporter(True))
     stats = neat.StatisticsReporter()
     population.add_reporter(stats)
@@ -155,8 +155,8 @@ def test_ai(config):
     
     with open("model.pkl", "rb") as f:
         winner = pickle.load(f)
-    game = PonGame(None, 0, 0)
-    game.test_ai(winner)
+    game = PonGame(window, width, height)
+    game.test_ai(winner, config)
 
 if __name__ == "__main__":
     local_dir = os.path.dirname(__file__)
@@ -168,5 +168,5 @@ if __name__ == "__main__":
         neat.DefaultStagnation,
         config_path
     )
-    run_neat(config)
-    # test_ai(config)
+    # run_neat(config)
+    test_ai(config)
