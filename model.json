@@ -1,20 +1,44 @@
 {
-  "key": 6586,
+  "key": 1345,
   "connections": [
     {
       "key": [
         -1,
         0
       ],
-      "weight": -0.3872144370641844,
-      "enabled": false
+      "weight": -2.4072552915664134,
+      "enabled": true
+    },
+    {
+      "key": [
+        -1,
+        1
+      ],
+      "weight": 0.2929992244735387,
+      "enabled": true
+    },
+    {
+      "key": [
+        -2,
+        0
+      ],
+      "weight": -1.3803158061535061,
+      "enabled": true
     },
     {
       "key": [
         -2,
         2
       ],
-      "weight": 4.976476687042843,
+      "weight": 3.486582575578306,
+      "enabled": true
+    },
+    {
+      "key": [
+        -3,
+        0
+      ],
+      "weight": -0.4799578250595921,
       "enabled": true
     },
     {
@@ -22,93 +46,40 @@
         -3,
         1
       ],
-      "weight": 5.538395415866937,
+      "weight": 1.355289092452095,
       "enabled": true
     },
     {
       "key": [
         -3,
-        0
+        2
       ],
-      "weight": -0.8578623422019169,
-      "enabled": false
-    },
-    {
-      "key": [
-        -3,
-        1093
-      ],
-      "weight": -0.5033696778750467,
-      "enabled": true
-    },
-    {
-      "key": [
-        -2,
-        0
-      ],
-      "weight": 0.13486202422515575,
-      "enabled": true
-    },
-    {
-      "key": [
-        1392,
-        0
-      ],
-      "weight": 1.8357158231765605,
-      "enabled": true
-    },
-    {
-      "key": [
-        1392,
-        1322
-      ],
-      "weight": -1.616467453157141,
+      "weight": -2.514600672860394,
       "enabled": true
     }
   ],
   "nodes": [
     {
       "key": 0,
-      "bias": 1.3742197201662822,
+      "bias": 4.75475725650758,
       "response": 1.0,
       "activation": "relu",
       "aggregation": "sum"
     },
     {
       "key": 1,
-      "bias": 4.027242621491678,
+      "bias": 2.7011437557258136,
       "response": 1.0,
       "activation": "relu",
       "aggregation": "sum"
     },
     {
       "key": 2,
-      "bias": 1.1664044008081416,
-      "response": 1.0,
-      "activation": "relu",
-      "aggregation": "sum"
-    },
-    {
-      "key": 1093,
-      "bias": 2.828800032267243,
-      "response": 1.0,
-      "activation": "relu",
-      "aggregation": "sum"
-    },
-    {
-      "key": 1322,
-      "bias": 2.1585286365252947,
-      "response": 1.0,
-      "activation": "relu",
-      "aggregation": "sum"
-    },
-    {
-      "key": 1392,
-      "bias": 2.443570232279749,
+      "bias": 4.3498882042834355,
       "response": 1.0,
       "activation": "relu",
       "aggregation": "sum"
     }
   ],
-  "fitness": 34
+  "fitness": 47
 }

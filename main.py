@@ -213,5 +213,5 @@ if __name__ == "__main__":
         neat.DefaultStagnation,
         config_path
     )
-    run_neat(config)
-    # test_ai(config)
+    # run_neat(config)
+    test_ai(config)
