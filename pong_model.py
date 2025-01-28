@@ -1,241 +1,219 @@
-import tensorflow as tf
-import numpy as np
-import tensorflowjs as tfjs
+#!/usr/bin/env python
+import pygame as pg
+from pong import Game
+import neat
 import os
-from tqdm import tqdm
 import time
+import json
+import math
 
 
-class PongEnv:
-    def __init__(self, width=1080, height=720):
-        self.width = width
-        self.height = height
-        self.paddle_width = 20
-        self.paddle_height = 100
-        self.ball_radius = 15
-        self.paddle_speed = 10
-        self.ball_speed = 10
-        self.reset()
+class PongGame:
+    def __init__(self, window, width, height):
+        self.game = Game(window, width, height)
+        self.ball = self.game.ball
+        self.left_paddle = self.game.left_paddle
+        self.right_paddle = self.game.right_paddle
+        self.previous_ball_pos = (self.ball.x, self.ball.y)
+        self.was_ball_reachable = True
 
-    def reset(self):
-        # Reset ball to center
-        self.ball_pos = np.array([self.width / 2, self.height / 2], dtype=np.float32)
-        self.ball_vel = np.array([self.ball_speed, 0], dtype=np.float32)
-        angle = np.random.uniform(-np.pi / 4, np.pi / 4)
-        self.ball_vel = self.ball_speed * np.array([np.cos(angle), np.sin(angle)])
+    def get_ball_speed(self):
+        current_pos = (self.ball.x, self.ball.y)
+        dx = current_pos[0] - self.previous_ball_pos[0]
+        dy = current_pos[1] - self.previous_ball_pos[1]
+        self.previous_ball_pos = current_pos
+        return dx, dy
 
-        # Reset paddles
-        self.left_paddle = self.height / 2 - self.paddle_height / 2
-        self.right_paddle = self.height / 2 - self.paddle_height / 2
+    def predict_ball_intersection(self):
+        dx, dy = self.get_ball_speed()
+        if dx == 0:
+            return self.ball.x, self.ball.y
 
-        return self._get_state()
+        # Calculate time to reach paddle's x position
+        if dx > 0:  # Ball moving right
+            t = (self.right_paddle.x - self.ball.x) / dx
+        else:  # Ball moving left
+            t = (self.left_paddle.x - self.ball.x) / dx
 
-    def _get_state(self):
-        return np.array(
-            [
-                self.ball_pos[0] / self.width,  # normalized x position
-                self.ball_pos[1] / self.height,  # normalized y position
-                self.left_paddle / self.height,  # normalized left paddle position
-                self.ball_vel[0] / self.ball_speed,  # normalized x velocity
-                self.ball_vel[1] / self.ball_speed,  # normalized y velocity
-            ],
-            dtype=np.float32,
+        future_y = self.ball.y + dy * t
+        return future_y
+
+    def get_normalized_inputs(self, paddle):
+        # Get ball speed
+        ball_dx, ball_dy = self.get_ball_speed()
+
+        # Normalize positions by game dimensions
+        norm_ball_x = self.ball.x / self.game.game_width
+        norm_ball_y = self.ball.y / self.game.game_height
+        norm_paddle_y = paddle.y / self.game.game_height
+
+        # Normalize speeds
+        max_speed = 10.0  # Adjust based on your game's maximum speeds
+        norm_ball_dx = ball_dx / max_speed
+        norm_ball_dy = ball_dy / max_speed
+
+        # Calculate distance to ball
+        dx = self.ball.x - paddle.x
+        dy = self.ball.y - paddle.y
+        distance = math.sqrt(dx * dx + dy * dy)
+        norm_distance = distance / math.sqrt(
+            self.game.game_width**2 + self.game.game_height**2
         )
 
-    def step(self, action):
-        # Action: 0 (up), 1 (stay), 2 (down)
-        # Update left paddle position
-        if action == 0:  # up
-            self.left_paddle = max(0, self.left_paddle - self.paddle_speed)
-        elif action == 2:  # down
-            self.left_paddle = min(
-                self.height - self.paddle_height, self.left_paddle + self.paddle_speed
-            )
+        # Predict intersection point
+        intersection_y = self.predict_ball_intersection()
+        norm_intersection = intersection_y / self.game.game_height
 
-        # Simple AI for right paddle (to generate training data)
-        if self.ball_pos[1] > self.right_paddle + self.paddle_height / 2:
-            self.right_paddle = min(
-                self.height - self.paddle_height, self.right_paddle + self.paddle_speed
-            )
-        elif self.ball_pos[1] < self.right_paddle + self.paddle_height / 2:
-            self.right_paddle = max(0, self.right_paddle - self.paddle_speed)
-
-        # Update ball position
-        self.ball_pos += self.ball_vel
-
-        # Ball collision with top and bottom
-        if self.ball_pos[1] <= 0 or self.ball_pos[1] >= self.height:
-            self.ball_vel[1] *= -1
-
-        # Ball collision with paddles
-        if (
-            self.ball_pos[0] <= self.paddle_width
-            and self.left_paddle
-            <= self.ball_pos[1]
-            <= self.left_paddle + self.paddle_height
-        ):
-            self.ball_vel[0] *= -1
-            reward = 1.0  # Reward for successful hit
-        elif (
-            self.ball_pos[0] >= self.width - self.paddle_width
-            and self.right_paddle
-            <= self.ball_pos[1]
-            <= self.right_paddle + self.paddle_height
-        ):
-            self.ball_vel[0] *= -1
-            reward = 0.0
-        # Ball out of bounds
-        elif self.ball_pos[0] <= 0:
-            reward = -1.0  # Penalize missing the ball
-            done = True
-            return self._get_state(), reward, done
-        elif self.ball_pos[0] >= self.width:
-            reward = 0.0
-            done = True
-            return self._get_state(), reward, done
-        else:
-            reward = 0.0
-
-        done = False
-        return self._get_state(), reward, done
-
-
-def create_model():
-    # Configure GPU memory growth
-    gpus = tf.config.list_physical_devices("GPU")
-    if gpus:
-        try:
-            for gpu in gpus:
-                tf.config.experimental.set_memory_growth(gpu, True)
-            print("GPU acceleration enabled")
-        except RuntimeError as e:
-            print(f"GPU setup error: {e}")
-
-    model = tf.keras.Sequential(
-        [
-            tf.keras.layers.Dense(128, activation="relu", input_shape=(5,)),
-            tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.Dense(64, activation="relu"),
-            tf.keras.layers.BatchNormalization(),
-            tf.keras.layers.Dense(3, activation="softmax"),
+        return [
+            norm_ball_x,
+            norm_ball_y,
+            norm_paddle_y,
+            norm_ball_dx,
+            norm_ball_dy,
+            norm_distance,
+            norm_intersection,
         ]
-    )
 
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(learning_rate=0.001),
-        loss="sparse_categorical_crossentropy",
-        metrics=["accuracy"],
-    )
+    def test_ai(self, genome, config):
+        net = neat.nn.FeedForwardNetwork.create(genome, config)
 
-    return model
+        run = True
+        clock = pg.time.Clock()
+        while run:
+            clock.tick(60)
+            for event in pg.event.get():
+                if event.type == pg.QUIT:
+                    run = False
+                    break
 
+            keys = pg.key.get_pressed()
+            if keys[pg.K_w]:
+                self.game.move_paddle(left=True, up=True)
+            elif keys[pg.K_s]:
+                self.game.move_paddle(left=True, up=False)
 
-def collect_experience(env, num_episodes=1000):
-    states = []
-    actions = []
-    rewards = []
+            inputs = self.get_normalized_inputs(self.right_paddle)
+            output = net.activate(inputs)
+            decision = output.index(max(output))
 
-    for _ in tqdm(range(num_episodes), desc="Collecting experience"):
-        state = env.reset()
-        done = False
-
-        while not done:
-            # Use heuristic to determine action
-            ball_y = state[1]  # normalized ball y position
-            paddle_y = state[2]  # normalized paddle y position
-            paddle_height_norm = env.paddle_height / env.height
-
-            if ball_y < paddle_y:
-                action = 0  # move up
-            elif ball_y > paddle_y + paddle_height_norm:
-                action = 2  # move down
+            if decision == 0:
+                pass
+            elif decision == 1:
+                self.game.move_paddle(left=False, up=True)
             else:
-                action = 1  # stay
+                self.game.move_paddle(left=False, up=False)
 
-            next_state, reward, done = env.step(action)
+            game_info = self.game.loop()
+            self.game.draw()
+            pg.display.update()
 
-            states.append(state)
-            actions.append(action)
-            rewards.append(reward)
+        pg.quit()
 
-            state = next_state
+    def train_ai(self, genome1, genome2, config):
+        net1 = neat.nn.FeedForwardNetwork.create(genome1, config)
+        net2 = neat.nn.FeedForwardNetwork.create(genome2, config)
 
-    return (
-        np.array(states, dtype=np.float32),
-        np.array(actions, dtype=np.int32),
-        np.array(rewards, dtype=np.float32),
-    )
+        max_hits = 50
+        start_time = time.time()
+        max_time = 60  # 1 minute timeout
+
+        while True:
+            for event in pg.event.get():
+                if event.type == pg.QUIT:
+                    return
+
+            # Left paddle (Genome 1)
+            inputs1 = self.get_normalized_inputs(self.left_paddle)
+            output1 = net1.activate(inputs1)
+            decision1 = output1.index(max(output1))
+
+            if decision1 == 1:
+                self.game.move_paddle(left=True, up=True)
+            elif decision1 == 2:
+                self.game.move_paddle(left=True, up=False)
+
+            # Right paddle (Genome 2)
+            inputs2 = self.get_normalized_inputs(self.right_paddle)
+            output2 = net2.activate(inputs2)
+            decision2 = output2.index(max(output2))
+
+            if decision2 == 1:
+                self.game.move_paddle(left=False, up=True)
+            elif decision2 == 2:
+                self.game.move_paddle(left=False, up=False)
+
+            game_info = self.game.loop()
+
+            # Check termination conditions
+            if (
+                game_info.left_score >= 1
+                or game_info.right_score >= 1
+                or game_info.left_hits > max_hits
+                or game_info.right_hits > max_hits
+                or time.time() - start_time > max_time
+            ):
+                self.calculate_fitness(genome1, genome2, game_info)
+                break
+
+    def calculate_fitness(self, genome1, genome2, game_info):
+        # Base points for scoring
+        score_weight = 10
+        genome1.fitness += game_info.left_score * score_weight
+        genome2.fitness += game_info.right_score * score_weight
+
+        # Reward for successful hits
+        hit_weight = 0.5
+        genome1.fitness += game_info.left_hits * hit_weight
+        genome2.fitness += game_info.right_hits * hit_weight
+
+        # Penalty for letting opponent score
+        miss_penalty = 2
+        if self.was_ball_reachable:
+            genome1.fitness -= game_info.right_score * miss_penalty
+            genome2.fitness -= game_info.left_score * miss_penalty
 
 
-def train_model(save_path="public/ai-models/pong-model"):
-    # Create environment
-    env = PongEnv()
+def eval_genomes(genomes, config):
+    width, height = 1080, 720
+    window = pg.display.set_mode((width, height))
 
-    # Collect training data
-    print("Collecting training data...")
-    states, actions, rewards = collect_experience(env)
+    for i, (genome_id1, genome1) in enumerate(genomes):
+        if i == len(genomes) - 1:
+            break
 
-    # Create and train model
-    print("Creating model...")
-    model = create_model()
+        genome1.fitness = 0
+        for genome_id2, genome2 in genomes[i + 1 :]:
+            genome2.fitness = 0 if genome2.fitness is None else genome2.fitness
+            game = PongGame(window, width, height)
+            game.train_ai(genome1, genome2, config)
 
-    # Convert data to TensorFlow datasets
-    dataset = (
-        tf.data.Dataset.from_tensor_slices((states, actions))
-        .shuffle(10000)
-        .batch(256)
-        .prefetch(tf.data.AUTOTUNE)
-    )
 
-    print("Training model...")
-    start_time = time.time()
+def run_neat(config):
+    # Use this to start fresh
+    pop = neat.Population(config)
 
-    # Train with early stopping
-    history = model.fit(
-        dataset,
-        epochs=50,
-        validation_split=0.1,
-        callbacks=[
-            tf.keras.callbacks.EarlyStopping(
-                monitor="val_loss", patience=5, restore_best_weights=True
-            ),
-            tf.keras.callbacks.ReduceLROnPlateau(
-                monitor="val_loss", factor=0.5, patience=3, min_lr=0.0001
-            ),
-        ],
-    )
+    # Or use this to continue from a checkpoint
+    # pop = neat.Checkpointer.restore_checkpoint('neat-checkpoint-X')
 
-    training_time = time.time() - start_time
-    print(f"\nTraining completed in {training_time:.2f} seconds")
+    pop.add_reporter(neat.StdOutReporter(True))
+    stats = neat.StatisticsReporter()
+    pop.add_reporter(stats)
+    pop.add_reporter(neat.Checkpointer(5))
 
-    # Create output directory if it doesn't exist
-    os.makedirs(save_path, exist_ok=True)
+    winner = pop.run(eval_genomes, 50)
 
-    # Save the model in TensorFlow.js format
-    print(f"Saving model to {save_path}")
-    tfjs.converters.save_keras_model(model, save_path)
-
-    # Test the model
-    print("\nTesting model...")
-    test_episodes = 10
-    total_reward = 0
-
-    for episode in range(test_episodes):
-        state = env.reset()
-        done = False
-        episode_reward = 0
-
-        while not done:
-            action = np.argmax(model.predict(state[np.newaxis], verbose=0))
-            state, reward, done = env.step(action)
-            episode_reward += reward
-
-        total_reward += episode_reward
-        print(f"Episode {episode + 1} reward: {episode_reward}")
-
-    print(f"\nAverage test reward: {total_reward / test_episodes}")
-    return model, history
-
+    with open("best_genome.json", "w") as f:
+        json.dump(genome_to_json(winner), f)
 
 if __name__ == "__main__":
-    model, history = train_model()
+    local_dir = os.path.dirname(__file__)
+    config_path = os.path.join(local_dir, "config.txt")
+    config = neat.config.Config(
+        neat.DefaultGenome,
+        neat.DefaultReproduction,
+        neat.DefaultSpeciesSet,
+        neat.DefaultStagnation,
+        config_path,
+    )
+    run_neat(config)
+    # test_ai(config)

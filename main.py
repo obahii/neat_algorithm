@@ -6,6 +6,7 @@ import neat
 import os
 import time
 import pickle
+import json
 
 
 class PonGame:
@@ -106,55 +107,99 @@ def eval_genomes(genomes, config):
             genome_2.fitness = 0 if genome_2.fitness is None else genome_2.fitness
             game = PonGame(window, width, height)
             game.train_ai(genome_1, genome_2, config)
-            
-            
-            
-        
-    
-    # for genome_id, genome in genomes:
-    #     net = neat.nn.FeedForwardNetwork.create(genome, config)
-    #     game = PonGame(window, window_width, window_height)
-    #     run = True
-    #     clock = pg.time.Clock()
-    #     while run:
-    #         clock.tick(60)
-    #         for event in pg.event.get():
-    #             if event.type == pg.QUIT:
-    #                 run = False
-    #                 break
-    #         output = net.activate((game.ball.x, game.ball.y, game.ball.x_speed, game.ball.y_speed, game.left_paddle.y, game.right_paddle.y))
-    #         if output[0] > 0.5:
-    #             game.game.move_paddle(left=True, up=True)
-    #         elif output[1] > 0.5:
-    #             game.game.move_paddle(left=True, up=False)
-    #         game_info = game.game.loop()
-    #         genome.fitness = game_info.left_score
-    #         if game_info.left_score == 5:
-    #             break
-    #         game.game.draw()
-    #         pg.display.update()
-    #     pg.quit()
 
+
+def genome_to_json(genome):
+    """Convert a genome into a JSON-serializable dictionary."""
+    genome_dict = {
+        "key": genome.key,
+        "connections": [],
+        "nodes": [],
+        "fitness": genome.fitness,
+    }
+
+    # Save connection genes
+    for key, conn in genome.connections.items():
+        genome_dict["connections"].append(
+            {"key": (key[0], key[1]), "weight": conn.weight, "enabled": conn.enabled}
+        )
+
+    # Save node genes
+    for key, node in genome.nodes.items():
+        genome_dict["nodes"].append(
+            {
+                "key": key,
+                "bias": node.bias,
+                "response": node.response,
+                "activation": node.activation,
+                "aggregation": node.aggregation,
+            }
+        )
+
+    return genome_dict
+
+
+def json_to_genome(json_data, config):
+    """Convert a JSON dictionary back into a genome."""
+    genome = neat.DefaultGenome(0)
+    genome.configure_new(config.genome_config)
+
+    # Create node genes
+    genome.nodes = {}
+    for node_data in json_data["nodes"]:
+        node = neat.genes.DefaultNodeGene(node_data["key"])
+        node.bias = node_data["bias"]
+        node.response = node_data["response"]
+        node.activation = node_data["activation"]
+        node.aggregation = node_data["aggregation"]
+        genome.nodes[node_data["key"]] = node
+
+    genome.connections = {}
+    for conn_data in json_data["connections"]:
+        conn = neat.genes.DefaultConnectionGene(tuple(conn_data["key"]))
+        conn.weight = conn_data["weight"]
+        conn.enabled = conn_data["enabled"]
+        genome.connections[tuple(conn_data["key"])] = conn
+
+    genome.key = json_data["key"]
+    genome.fitness = json_data["fitness"]
+
+    return genome
 
 def run_neat(config):
-    population = neat.Checkpointer.restore_checkpoint("neat-checkpoint-23")
-    # population = neat.Population(config)
+    checkpoint_dir = "neat_checkpoints"
+    if not os.path.exists(checkpoint_dir):
+        os.makedirs(checkpoint_dir)
+    # population = neat.Checkpointer.restore_checkpoint("neat-checkpoint-5")
+    population = neat.Population(config)
     population.add_reporter(neat.StdOutReporter(True))
     stats = neat.StatisticsReporter()
     population.add_reporter(stats)
-    population.add_reporter(neat.Checkpointer(1))
-    
-    winner = population.run(eval_genomes, 50)
-    with open("model.pkl", "wb") as f:
-        pickle.dump(winner, f)
+    population.add_reporter(
+        neat.Checkpointer(
+            generation_interval=1, filename_prefix=f"{checkpoint_dir}/neat-checkpoint-"
+        )
+    )
+    # population.add_reporter(neat.Checkpointer(1))
+
+    winner = population.run(eval_genomes, 15)
+    # with open("model.pkl", "wb") as f:
+    #     pickle.dump(winner, f)
+    winner_json = genome_to_json(winner)
+    with open("model.json", "w") as f:
+        json.dump(winner_json, f, indent=2)
 
 
 def test_ai(config):
     width, height = 1080, 720
     window = pg.display.set_mode((width, height))
-    
-    with open("model.pkl", "rb") as f:
-        winner = pickle.load(f)
+
+    # with open("model.pkl", "rb") as f:
+    #     winner = pickle.load(f)
+    with open("model.json", "r") as f:
+        genome_data = json.load(f)
+    winner = json_to_genome(genome_data, config)
+
     game = PonGame(window, width, height)
     game.test_ai(winner, config)
 
@@ -168,5 +213,5 @@ if __name__ == "__main__":
         neat.DefaultStagnation,
         config_path
     )
-    # run_neat(config)
-    test_ai(config)
+    run_neat(config)
+    # test_ai(config)
